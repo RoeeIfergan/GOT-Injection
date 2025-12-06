@@ -35,6 +35,7 @@ static int make_writable(void *addr)
     if (mprotect((void *)page_start, page_size,
                  PROT_READ | PROT_WRITE) != 0) {
         perror("[libhook] mprotect");
+
         return -1;
     }
     return 0;

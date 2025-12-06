@@ -16,6 +16,8 @@
 
 static int (*real_printf)(const char *fmt, ...) = NULL;
 
+//TODO: Supress all logs in this file so server doesn't know it was injected. use the debug_print()
+
 /* -------- our replacement printf -------- */
 
 static int my_printf(const char *fmt, ...)
