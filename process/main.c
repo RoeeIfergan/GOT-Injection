@@ -11,11 +11,11 @@
 #include <elf.h>        // NT_PRSTATUS
 #include <signal.h>
 #include <errno.h>
-#include "injector.h"
+#include "injection/injector.h"
 // AArch64 register struct (Linux-specific)
 #include <asm/ptrace.h> // struct user_pt_regs
 
-#include "identify_listening_process_details.h"
+#include "utils/identify_listening_process_details.h"
 // ---------- helpers: find library base in /proc/<pid>/maps ----------
 
 // unsigned long long findLibrary(const char *library, pid_t pid) {

@@ -1,26 +1,20 @@
-// injector.c
-// AArch64 ptrace + dlopen injector that works with modern glibc
-// and does NOT use Dl_info/dladdr.
-
 #define _GNU_SOURCE
-#include "injector.h"
 
+#include <elf.h>        // NT_PRSTATUS
+#include <dlfcn.h>      // dlopen, dlsym
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-#include <sys/ptrace.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <sys/uio.h>    // struct iovec
-#include <signal.h>
-#include <errno.h>
-#include <dlfcn.h>      // dlopen, dlsym
-#include <elf.h>        // NT_PRSTATUS
 #include <stdint.h>
-
+#include <sys/uio.h>    // struct iovec
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/ptrace.h>
 #include <asm/ptrace.h> // struct user_pt_regs (AArch64)
+
+#include "injector.h"
 
 // ---------------------------------------------------------------------
 // /proc/<pid>/maps helpers
@@ -217,7 +211,7 @@ int resolve_remote_dlopen(pid_t pid, void **remote_func_out) {
     }
     local_lib_name = "libdl.so.2";
 
-got_local:
+    got_local:
     // 3. Get base of that library in our own process using /proc/self/maps.
     unsigned long long local_lib_base = findLibrary(local_lib_name, -1);
     if (!local_lib_base) {
