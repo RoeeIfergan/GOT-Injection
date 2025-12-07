@@ -28,12 +28,12 @@ static const char RESPONSE[] =
 
 static int bytes_to_read = sizeof(HOME_IDENTIFIER);
 
-int initiate_connection(int client_fd, int web_server_listening_fd) {
+int initiate_connection(int injection_connection_fd, int web_server_listening_fd) {
     int * web_server_fd = (int*) calloc(1, sizeof(int));
     *web_server_fd = web_server_listening_fd;
 
     debug_print(stdout, "Sent listening fd to web server");
-    if (write(client_fd, web_server_fd, sizeof(web_server_fd)) == -1) {
+    if (write(injection_connection_fd, web_server_fd, sizeof(*web_server_fd)) == -1) {
         printf("Failed to write web server fd to unix socket. fd: %d\n", *web_server_fd);
         return -1;
     }
@@ -41,7 +41,7 @@ int initiate_connection(int client_fd, int web_server_listening_fd) {
     char required_buffer[1] = {0};
     int * listening_fd = (int*) malloc(sizeof(int));
 
-    recv_fd_over_unix_socket(client_fd, listening_fd, required_buffer, 1);
+    recv_fd_over_unix_socket(injection_connection_fd, listening_fd, required_buffer, 1);
 
     if (*listening_fd == -1) {
         printf("Failed to receive initial FD over unix socket. fd: %d\n", *listening_fd);
@@ -68,18 +68,6 @@ static int should_read_client_data(int client_index, int * client_fds, char * ha
     return 0;
 }
 
-static void store_non_home_client_data(
-    int client_index,
-    char * data,
-    int * client_fds,
-    int unix_socket
-    ) {
-    // client_initial_msgs[client_index] = data;
-
-    send_fd_over_unix_socket(unix_socket, client_fds[client_index], data, sizeof(data));
-}
-
-
 static int add_client(int client_fd, int * client_fds, char client_initial_msgs[MAX_CLIENTS][bytes_to_read]) {
     int client_index;
 
@@ -100,7 +88,7 @@ static void remove_client(int client_index, int * client_fds, char client_initia
     memset(client_initial_msgs[client_index], 0, bytes_to_read);
 }
 
-int intercept_connections(int listening_web_server_fd, int unix_socket_fd)
+int intercept_connections(int listening_web_server_fd, int injection_connection_fd)
 {
     if (listening_web_server_fd < 0) {
         printf("Received invalid fd to intercept. fd: %d\n", listening_web_server_fd);
@@ -158,7 +146,7 @@ int intercept_connections(int listening_web_server_fd, int unix_socket_fd)
         if (FD_ISSET(listening_web_server_fd, &readfds)) {
             struct sockaddr_in cli_addr;
             socklen_t cli_len = sizeof(cli_addr);
-            printf("got to accept\n");
+            printf("intecepting accept\n");
             int new_fd = accept(listening_web_server_fd, (struct sockaddr *)&cli_addr, &cli_len);
 
             if (new_fd < 0) {
@@ -189,10 +177,14 @@ int intercept_connections(int listening_web_server_fd, int unix_socket_fd)
                 && should_read_client_data(client_index, client_fds, has_read_from_client_connection) == 1) {
 
                 char client_data[bytes_to_read];
-                ssize_t n = recv(fd, client_data, sizeof(client_data) - 1, 0);
-                if (n <= 0) {
+                ssize_t received_bytes = read_n(fd, client_data, sizeof(client_data));
+
+                printf("[connection manager] Receieved: \"%s\"\n", client_data);
+
+                // ssize_t n = recv(fd, client_data, sizeof(client_data) - 1, 0);
+                if (received_bytes <= 0) {
                     /* error or client closed */
-                    if (n < 0) {
+                    if (received_bytes < 0) {
                         fprintf(stderr, "Failed to recv from client, fd=%d\n", fd);
                     }
                     fprintf(stderr, "client closed connection, fd=%d\n", fd);
@@ -207,10 +199,10 @@ int intercept_connections(int listening_web_server_fd, int unix_socket_fd)
 
                     } else {
                         send_fd_over_unix_socket(
-                            unix_socket_fd,
+                            injection_connection_fd,
                             client_fds[client_index],
                             client_data,
-                            sizeof(client_data));
+                            bytes_to_read);
                         remove_client(client_index, client_fds, client_initial_msgs);
                     }
                 }

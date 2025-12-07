@@ -30,6 +30,11 @@ add_library(payload SHARED
         utils/helpers.h
         utils/unix_socket.c
         utils/unix_socket.h
+        injection/utils/hooks/hooked_accept.c
+        injection/utils/hooks/hooked_accept.h
+        injection/utils/hooks/hook_global_state.h
+        injection/utils/hooks/hook_read.c
+        injection/utils/hooks/hook_read.h
 )
 set_target_properties(payload PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "/tmp"

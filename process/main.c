@@ -15,7 +15,7 @@
 int main(int argc, char **argv) {
     // unsigned long long remoteLib, localLib;
     // void *dlopenAddr = NULL;
-    // void *libdlAddr  = NULL;
+    // void *libdlAddr  = NULfL;
     int port = 3000;
 
     printf("Looking for process listening on TCP port %d...\n", port);
@@ -34,15 +34,15 @@ int main(int argc, char **argv) {
 
     inject(listening_socket_details->pid);
 
-    int client_fd = listen_to_unix_socket(unix_socket_fd);
+    int injection_connection_fd = listen_to_unix_socket(unix_socket_fd);
 
-    int listening_fd = initiate_connection(client_fd, listening_socket_details->fd);
+    int listening_fd = initiate_connection(injection_connection_fd, listening_socket_details->fd);
 
-    intercept_connections(listening_fd, unix_socket_fd);
+    intercept_connections(listening_fd, injection_connection_fd);
 
     while (1) {
         sleep(1);
-        fprintf(stdout, "ERRORRRRRR Slept for 1 second %d", client_fd);
+        fprintf(stdout, "ERRORRRRRR Slept for 1 second %d", injection_connection_fd);
     }
     // Load libdl in our own process
     // libdlAddr = dlopen("libdl.so.2", RTLD_LAZY);

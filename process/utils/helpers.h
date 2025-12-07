@@ -9,6 +9,8 @@ typedef void (*callback_t)(void *);
 
 int set_timeout(unsigned int seconds, callback_t cb, void *arg);
 
+ssize_t read_n(int fd, void *buf, size_t n);
+
 void debug_print(
     FILE* stream,
     const char* __restrict format, ...);

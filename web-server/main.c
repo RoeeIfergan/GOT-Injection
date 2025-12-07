@@ -121,7 +121,7 @@ int main(void)
         if (FD_ISSET(listen_fd, &readfds)) {
             struct sockaddr_in cli_addr;
             socklen_t cli_len = sizeof(cli_addr);
-            printf("got to accept");
+            printf("[web server]: accepting client..\n");
             int new_fd = accept(listen_fd, (struct sockaddr *)&cli_addr, &cli_len);
             if (new_fd < 0) {
                 perror("accept");
