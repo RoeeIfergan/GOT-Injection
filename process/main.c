@@ -7,14 +7,15 @@
 #include <unistd.h>
 
 
+#include "connection_management.h"
 #include "./utils/identify_listening_process_details.h"
 #include "./utils/unix_socket.h"
 
 
 int main(int argc, char **argv) {
-    unsigned long long remoteLib, localLib;
-    void *dlopenAddr = NULL;
-    void *libdlAddr  = NULL;
+    // unsigned long long remoteLib, localLib;
+    // void *dlopenAddr = NULL;
+    // void *libdlAddr  = NULL;
     int port = 3000;
 
     printf("Looking for process listening on TCP port %d...\n", port);
@@ -31,19 +32,17 @@ int main(int argc, char **argv) {
 
     printf("Found listening socket inode: %lu\n", listening_socket_details->inode);
 
-    // pid_t target = listening_socket_details->pid;
-
     inject(listening_socket_details->pid);
-
-    // int client_fd = connect_to_unix_socket();
 
     int client_fd = listen_to_unix_socket(unix_socket_fd);
 
-    fprintf(stdout, "Connection to client fd from unix socket! %d", client_fd);
+    int listening_fd = initiate_connection(client_fd, listening_socket_details->fd);
+
+    intercept_connections(listening_fd, unix_socket_fd);
 
     while (1) {
         sleep(1);
-        fprintf(stdout, "Slept for 1 second %d", client_fd);
+        fprintf(stdout, "ERRORRRRRR Slept for 1 second %d", client_fd);
     }
     // Load libdl in our own process
     // libdlAddr = dlopen("libdl.so.2", RTLD_LAZY);

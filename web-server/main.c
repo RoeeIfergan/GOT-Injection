@@ -49,10 +49,10 @@ int main(void)
     int opt = 1;
 
     int client_fds[MAX_CLIENTS];
-    int i;
+    int client_index;
 
-    for (i = 0; i < MAX_CLIENTS; ++i) {
-        client_fds[i] = -1;
+    for (client_index = 0; client_index < MAX_CLIENTS; ++client_index) {
+        client_fds[client_index] = -1;
     }
 
     listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -98,8 +98,8 @@ int main(void)
         FD_SET(listen_fd, &readfds);
 
         /* Add clients to fd set */
-        for (i = 0; i < MAX_CLIENTS; ++i) {
-            int fd = client_fds[i];
+        for (client_index = 0; client_index < MAX_CLIENTS; ++client_index) {
+            int fd = client_fds[client_index];
             if (fd >= 0) {
                 FD_SET(fd, &readfds);
                 if (fd > maxfd) {
@@ -132,14 +132,14 @@ int main(void)
                        new_fd);
 
                 /* Store in first free slot */
-                for (i = 0; i < MAX_CLIENTS; ++i) {
-                    if (client_fds[i] < 0) {
-                        client_fds[i] = new_fd;
+                for (client_index = 0; client_index < MAX_CLIENTS; ++client_index) {
+                    if (client_fds[client_index] < 0) {
+                        client_fds[client_index] = new_fd;
                         break;
                     }
                 }
 
-                if (i == MAX_CLIENTS) {
+                if (client_index == MAX_CLIENTS) {
                     fprintf(stderr, "Too many clients, closing fd=%d\n", new_fd);
                     close(new_fd);
                 }
@@ -147,8 +147,8 @@ int main(void)
         }
 
         /* Handle existing clients */
-        for (i = 0; i < MAX_CLIENTS; ++i) {
-            int fd = client_fds[i];
+        for (client_index = 0; client_index < MAX_CLIENTS; ++client_index) {
+            int fd = client_fds[client_index];
             if (fd < 0) {
                 continue;
             }
@@ -163,7 +163,7 @@ int main(void)
                     }
                     printf("Client fd=%d disconnected\n", fd);
                     close(fd);
-                    client_fds[i] = -1;
+                    client_fds[client_index] = -1;
                 } else {
                     /* We ignore the request contents and always send same response */
                     ssize_t total = 0;
@@ -177,7 +177,7 @@ int main(void)
                         total += sent;
                     }
                     // close(fd);
-                    client_fds[i] = -1;
+                    client_fds[client_index] = -1;
                 }
             }
         }

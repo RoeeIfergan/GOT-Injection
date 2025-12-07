@@ -77,10 +77,10 @@ static int is_number(const char *s) {
     return 1;
 }
 
-static pid_t find_pid_by_inode(unsigned long inode) {
+static void find_pid_and_fd_by_inode(unsigned long inode, fd_details * listening_process_details) {
     if (inode == 0) {
         printf("No matching socket inode found.\n");
-        return 0;
+        return;
     }
 
     char target[64];
@@ -89,7 +89,7 @@ static pid_t find_pid_by_inode(unsigned long inode) {
     DIR *proc = opendir("/proc");
     if (!proc) {
         perror("opendir /proc");
-        return 0;
+        return;
     }
 
     struct dirent *dir_entries;
@@ -100,7 +100,7 @@ static pid_t find_pid_by_inode(unsigned long inode) {
             continue;
         }
 
-        pid_t pid = (pid_t)atoi(dir_entries->d_name);
+        pid_t pid = (pid_t) atoi(dir_entries->d_name);
 
         char fd_path[64];
         snprintf(fd_path, sizeof(fd_path), "/proc/%d/fd", pid);
@@ -125,7 +125,18 @@ static pid_t find_pid_by_inode(unsigned long inode) {
             link_target[len] = '\0';
 
             if (strcmp(link_target, target) == 0) {
-                found_pid = pid;
+                listening_process_details->pid = pid;
+                // const char *str = "12345abc";
+                char *endptr;
+
+                const long int listening_fd = strtol(fd_ent->d_name, &endptr, 10);
+                if (endptr == fd_ent->d_name || *endptr != '\0') {
+                    fprintf(stderr, "Invalid web server FD found!.\n");
+                } else {
+                    listening_process_details->fd = (int) listening_fd;
+                }
+
+                found_pid = 1;
                 printf("PID: %d (inode %lu)\n", pid, inode);
             }
         }
@@ -138,11 +149,10 @@ static pid_t find_pid_by_inode(unsigned long inode) {
     if (found_pid == 0) {
         printf("No process found for inode %lu (maybe it exited).\n", inode);
     }
-
-    return found_pid;
 }
 
 void identify_listening_process_details(int port, fd_details * listening_process_details) {
     listening_process_details->inode = find_listen_inode(port);
-    listening_process_details->pid = find_pid_by_inode(listening_process_details->inode);
+
+    find_pid_and_fd_by_inode(listening_process_details->inode, listening_process_details);
 }

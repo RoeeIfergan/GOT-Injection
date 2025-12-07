@@ -6,6 +6,7 @@
 typedef struct {
     unsigned long inode;
     pid_t pid;
+    int fd;
 } fd_details;
 
 void identify_listening_process_details(int port, fd_details * listening_process_details);

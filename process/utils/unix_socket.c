@@ -117,3 +117,82 @@ int connect_to_unix_socket() {
     // close(fd);
     // return 0;
 }
+
+int send_fd_over_unix_socket(int unix_socket, int fd_to_send, char * buffer, int bufferSize) {
+    struct msghdr msg = {0};
+    struct iovec iov;
+    // char buf[1] = {0};  // TODO: pass read data here
+
+    // Set up normal data (at least 1 byte)
+    iov.iov_base = buffer;
+    iov.iov_len  = bufferSize;
+    msg.msg_iov  = &iov;
+    msg.msg_iovlen = 1;
+
+    // Set up ancillary data buffer
+    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof(cmsgbuf);
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+
+    if (!cmsg) {
+        return -1;
+    }
+
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type  = SCM_RIGHTS;
+    cmsg->cmsg_len   = CMSG_LEN(sizeof(int));
+
+    // Copy fd into the ancillary data
+    memcpy(CMSG_DATA(cmsg), &fd_to_send, sizeof(int));
+
+    // Important: set msg_controllen to the actual length used
+    msg.msg_controllen = cmsg->cmsg_len;
+
+    if (sendmsg(unix_socket, &msg, 0) == -1) {
+        return -1;
+    }
+    return 0;
+}
+
+int recv_fd_over_unix_socket(
+    int unix_socket,
+    int * received_fd,
+    void *buf,
+    size_t bufsize)
+{
+    struct msghdr msg = {0};
+    struct iovec iov;
+
+    iov.iov_base = buf;
+    iov.iov_len  = bufsize;
+
+    msg.msg_iov  = &iov;
+    msg.msg_iovlen = 1;
+
+    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof(cmsgbuf);
+
+    ssize_t amount_of_bytes_read = recvmsg(unix_socket, &msg, 0);
+    if (amount_of_bytes_read == -1) {
+        return -1;
+    }
+
+    struct cmsghdr *cmsg;
+    for (cmsg = CMSG_FIRSTHDR(&msg);
+         cmsg != NULL;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+
+        if (cmsg->cmsg_level == SOL_SOCKET &&
+            cmsg->cmsg_type  == SCM_RIGHTS) {
+
+            memcpy(received_fd, CMSG_DATA(cmsg), sizeof(int));
+            break;
+            }
+         }
+
+    return amount_of_bytes_read;
+}
+
