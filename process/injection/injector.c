@@ -21,9 +21,10 @@
 
 #define SO_PATH "/tmp/inject.so"
 
-// ---------------------------------------------------------------------
-// /proc/<pid>/maps helpers
-// ---------------------------------------------------------------------
+/*
+ *  /proc/<pid>/maps helpers
+ */
+
 
 /*
  *  Find base address of a mapping whose line contains `library` substring.
@@ -95,10 +96,14 @@ int is_dynamic_process(pid_t pid) {
     return 0;
 }
 
-// ---------------------------------------------------------------------
-// Find an executable region in target (to reuse as scratch / code space)
-// ---------------------------------------------------------------------
-
+/*
+ *  Find an executable region in target (to reuse as scratch)
+ *
+ *  To inject our shared library we need to get the cpu to run our SO_PATH exec.
+ *  To be able to do this, we need to search for a region in target
+ *  process memory that is executable.
+ *
+ */
 void *freeSpaceAddr(pid_t pid) {
     FILE *fp;
     char filename[64];
@@ -126,9 +131,9 @@ void *freeSpaceAddr(pid_t pid) {
     return (void *)addr;
 }
 
-// ---------------------------------------------------------------------
-// ptrace memory helpers (read/write arbitrary bytes)
-// ---------------------------------------------------------------------
+/*
+ *  ptrace memory helpers (read/write arbitrary bytes)
+ */
 
 void ptraceRead(pid_t pid, unsigned long long addr, void *data, int len) {
     long word;
@@ -163,9 +168,10 @@ void ptraceWrite(pid_t pid, unsigned long long addr, const void *data, int len) 
     }
 }
 
-// ---------------------------------------------------------------------
-// AArch64 register access via PTRACE_GETREGSET / PTRACE_SETREGSET
-// ---------------------------------------------------------------------
+/*
+ *  AArch64 register access via PTRACE_GETREGSET / PTRACE_SETREGSET
+ */
+
 
 int get_regs(pid_t pid, struct user_pt_regs *regs) {
     struct iovec iov;
@@ -188,11 +194,6 @@ int set_regs(pid_t pid, const struct user_pt_regs *regs) {
     }
     return 0;
 }
-
-// ---------------------------------------------------------------------
-// Resolve remote dlopen address in target
-// Works if dlopen lives in libdl (older glibc) or in libc (modern glibc).
-// ---------------------------------------------------------------------
 
 typedef struct
 {
@@ -221,7 +222,7 @@ int get_local_dlopen(dlopen_info * dlopen_struct)
             dlopen_struct->dlopen = local_dlopen;
             dlopen_struct->lib_name = "libc.so.6";
 
-            debug_print(stderr, "[V]: Loaded libc.so.6 successfully!");
+            debug_print(stderr, "[V]: Loaded libc.so.6 successfully!\n");
             return 0;
         }
     }
@@ -252,6 +253,20 @@ int get_local_dlopen(dlopen_info * dlopen_struct)
     return 0;
 }
 
+/*
+ *  Our goal -> Find the remote dlopen
+ *  Why?     -> So we can use it to load our shared library!
+ *
+ *  Because of ASLR, this is tough but not impossible. The offset of dlopen
+ *  in the libc library on our local process is the same as the remote's offset.
+ *
+ *  The plan:
+ *  1. Locate our libc & dlopen addresses.
+ *  2. Calculate the offset
+ *  3. Locate remote process's libc using findLibrary
+ *  4. The remote process's dlopen's address is now known
+ *
+ */
 int resolve_remote_dlopen(const pid_t pid, void **remote_func_out) {
     if (!is_dynamic_process(pid)) {
         fprintf(stderr, "[X] Target %d appears to be static; no loader present.\n", pid);
@@ -272,7 +287,6 @@ int resolve_remote_dlopen(const pid_t pid, void **remote_func_out) {
         return -1;
     }
 
-    // 3. Get base of that library in our own process using /proc/self/maps.
     unsigned long long local_lib_base = findLibrary(local_dlopen->lib_name, -1);
     if (!local_lib_base) {
         fprintf(stderr, "[!] Could not find %s base in self.\n", local_dlopen->lib_name);
@@ -287,15 +301,13 @@ int resolve_remote_dlopen(const pid_t pid, void **remote_func_out) {
     unsigned long long offset =
         (unsigned long long)(uintptr_t)local_dlopen->dlopen - local_lib_base;
 
-    // 4. In the target, find the corresponding library and add the offset.
     unsigned long long remote_lib_base = 0;
 
     if (strcmp(local_dlopen->lib_name, "libc.so.6") == 0) {
-        // In /proc/<pid>/maps it might appear as "libc.so.6" or "libc-2.xx.so"
         remote_lib_base = findLibrary("libc.so.6", pid);
         if (!remote_lib_base) remote_lib_base = findLibrary("libc.so", pid);
         if (!remote_lib_base) remote_lib_base = findLibrary("libc-", pid);
-    } else { // libdl.so.2
+    } else {
         remote_lib_base = findLibrary("libdl.so.2", pid);
         if (!remote_lib_base) remote_lib_base = findLibrary("libdl.so", pid);
         if (!remote_lib_base) remote_lib_base = findLibrary("libdl-", pid);
@@ -319,12 +331,11 @@ int resolve_remote_dlopen(const pid_t pid, void **remote_func_out) {
     return 0;
 }
 
+/*
+ *  Main injection logic for AArch64
+ */
 
-// ---------------------------------------------------------------------
-// Main injection logic for AArch64
-// ---------------------------------------------------------------------
-
-static void inject_so_into_process(pid_t pid) {
+static int inject_so_into_process(pid_t pid) {
     struct user_pt_regs oldregs, regs;
     int status;
     unsigned char backup[64];
@@ -332,22 +343,22 @@ static void inject_so_into_process(pid_t pid) {
 
     if (resolve_remote_dlopen(pid, &remote_dlopen) == -1) {
         fprintf(stderr, "[!] Could not resolve remote dlopen.\n");
-        return;
+        return -1;
     }
 
     // Attach
     if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) == -1) {
         perror("PTRACE_ATTACH");
-        exit(1);
+        return -1;
     }
     if (waitpid(pid, &status, WUNTRACED) == -1) {
         perror("waitpid attach");
-        exit(1);
+        return -1;
     }
 
     // Save regs
     if (get_regs(pid, &oldregs) == -1) {
-        exit(1);
+        return -1;
     }
     memcpy(&regs, &oldregs, sizeof(regs));
 
@@ -377,7 +388,7 @@ static void inject_so_into_process(pid_t pid) {
     size_t path_len = strlen(SO_PATH) + 1;
     if (path_len > 48) {
         fprintf(stderr, "[!] so_path too long for this PoC (max 48 bytes)\n");
-        exit(1);
+        return -1;
     }
     ptraceWrite(pid, (unsigned long long)free_adr, SO_PATH, (int)path_len);
 
@@ -420,7 +431,7 @@ static void inject_so_into_process(pid_t pid) {
     regs.regs[30] = (unsigned long long)free_adr + 48;
 
     if (set_regs(pid, &regs) == -1) {
-        exit(1);
+        return -1;
     }
 
     /*
@@ -433,7 +444,7 @@ static void inject_so_into_process(pid_t pid) {
 
     if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
         perror("PTRACE_CONT");
-        exit(1);
+        return -1;
     }
 
     /*
@@ -442,7 +453,7 @@ static void inject_so_into_process(pid_t pid) {
 
     if (waitpid(pid, &status, WUNTRACED) == -1) {
         perror("waitpid after CONT");
-        exit(1);
+        return -1;
     }
 
     /*
@@ -455,7 +466,7 @@ static void inject_so_into_process(pid_t pid) {
     if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP) {
         // dlopen return in x0
         if (get_regs(pid, &regs) == -1) {
-            exit(1);
+            return -1;
         }
 
         /*
@@ -475,31 +486,26 @@ static void inject_so_into_process(pid_t pid) {
         // Restore original code + regs, detach
         ptraceWrite(pid, (unsigned long long)free_adr, backup, sizeof(backup));
         if (set_regs(pid, &oldregs) == -1) {
-            exit(1);
+            return -1;
         }
         if (ptrace(PTRACE_DETACH, pid, NULL, NULL) == -1) {
             perror("PTRACE_DETACH");
-            exit(1);
+            return -1;
         }
+
+        return 0;
     } else {
         fprintf(stderr, "[!] Unexpected stop (not SIGTRAP), status=0x%x\n", status);
-        exit(1);
+        return -1;
     }
+
 }
 
-// ---------------------------------------------------------------------
-// public entry point (called from your main.c)
-// ---------------------------------------------------------------------
-
-//TODO change /tmp/inject.so permissions to 777
-
 int inject(const pid_t pid) {
-    // const char *so_path = "/tmp/inject.so";
-
     printf("[*] AArch64 ptrace + dlopen-style injector\n");
     printf("[*] Target PID: %d, SO: %s\n", pid, SO_PATH);
 
-    if (inject_so_into_process(pid) == 0) {
+    if (inject_so_into_process(pid) != 0) {
         fprintf(stderr, "[Injector] Failed to inject shared library\n");
         return -1;
     }

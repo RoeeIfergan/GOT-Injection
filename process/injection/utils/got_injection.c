@@ -16,6 +16,9 @@
 
 #include "../../utils/helpers.h"
 
+/*
+ * Relocation type used for PLT entries that resolve to function calls
+ */
 #define MY_JUMP_SLOT R_AARCH64_JUMP_SLOT
 
 struct hook_ctx {
@@ -24,6 +27,26 @@ struct hook_ctx {
     void **orig_func;
     int patched_count;
 };
+
+/*
+ *  GOT is often read-only. to overwrite a GOT entry, we need to make it
+ *  writeable.
+ *
+ *  Our goal is to find the start of the page addr is in, and call mprotect() on it.
+ *  This will make the page writable.
+ *
+ *  Memory in linux is managed in fixed size chunks called pages.
+ *  A page's size is always 2^n
+ *  Therefore pages always start every 2^n bytes.
+ *  If we have some addr, we can compute it's start of the page address by
+ *  resetting it's lower n.
+ *
+ *  Steps:
+ *  1. find page size in OS
+ *  2. Reset the addr's lower n bits using the & bit operator to find the address of the
+ *     current page's start.
+ *  3. call mprotect on the start of the page
+ */
 
 static int make_writable(void *addr)
 {
@@ -42,6 +65,12 @@ static int make_writable(void *addr)
     return 0;
 }
 
+/*
+ *  Each shared object should have a dynamic section. We find it!
+ *
+ *  Why? Well the dynamic section contains the Elf64_Dyn which are the entries
+ *  describing the dynamic linking (Has all the refs needed for a GOT injection)
+ */
 static Elf64_Dyn * get_dynamic_section(
     struct dl_phdr_info *info,
     Elf64_Addr base_load_address
@@ -67,9 +96,11 @@ typedef struct
     Elf64_Sxword relocation_format;
 } elf_section_info;
 
-static int set_elf_section_info(
-    elf_section_info * info,
-    Elf64_Dyn *dynamic_section)
+
+static int get_elf_section_info(
+    Elf64_Dyn *dynamic_section,
+    elf_section_info * info
+    )
 {
     Elf64_Addr start_of_symbol_table = 0;
     Elf64_Addr start_of_string_table = 0;
@@ -99,11 +130,11 @@ static int set_elf_section_info(
         }
     }
 
-        if (!start_of_symbol_table
-            || !start_of_string_table
-            || !start_of_plt_relocation_table
-            || !size_of_plt_relocation_table)
-    {
+    if (!start_of_symbol_table
+        || !start_of_string_table
+        || !start_of_plt_relocation_table
+        || !size_of_plt_relocation_table
+        ) {
         return -1;
     }
 
@@ -131,14 +162,12 @@ static int phdr_callback(struct dl_phdr_info *info,
 
     elf_section_info * selection_info = (elf_section_info*) calloc(1, sizeof(elf_section_info));
 
-    if (selection_info == NULL)
-    {
+    if (selection_info == NULL) {
         fprintf(stderr, "[libhook] failed to allocate selection_info memory\n");
         return 0;
     }
 
-    if (set_elf_section_info(selection_info, dynamic_section) == -1)
-    {
+    if (get_elf_section_info(dynamic_section, selection_info) == -1) {
         debug_print(stderr, "[libhook] Invalid selection info\n");
         free(selection_info);
         return 0;
@@ -152,6 +181,23 @@ static int phdr_callback(struct dl_phdr_info *info,
         return 0;
     }
 
+    /*
+     *  We found all the memory addresses need for a GOT injection!
+     *  An explenation of the params:
+     *
+     *  symbol_table - A dynamic table storing the symbols loaded by the current ELF. Each entry contains
+     *                 - Symbol Name
+     *                 - Type (function, struct ..)
+     *                 - st_name (offset in the string table)
+     *                 - Virtual address    <-- will be overwritten
+     *  string_table - A dynamic string table. E.g: "\0printf\0malloc\0open\0read\0"
+     *  rela         - Points to the PLT relocation table. Each entry contains:
+     *                 - r_offset - offset from module base to the GOT entry
+     *                 - r_info - has both symbox index and relocation type
+     * rela_count    - Amount of PLT relocations exist in this module.
+     *                 This is useful because we can loop over rela and search for
+     *                 the symbol we need.
+     */
     Elf64_Sym  *symbol_table = (Elf64_Sym *)selection_info->start_of_symbol_table;
     const char *string_table = (const char *)selection_info->start_of_string_table;
     Elf64_Rela *rela   = (Elf64_Rela *)selection_info->start_of_plt_relocation_table;
@@ -162,27 +208,45 @@ static int phdr_callback(struct dl_phdr_info *info,
 
     debug_print(stderr, "[libhook] scanning object: %s\n", objname);
 
+    /*
+     *  For each rela entry:
+     *  1. filter out any relocation type that isn't a function (!= MY_JUMP_SLOT)
+     *  2. Get the rela_entrie's symbol
+     *  3. Get the string associated with the symbol. This string is the function name
+     *  4. Filter out all functions except the one i'm looking for
+     *  5. Get the rela entry memory address (AKA the GOT entry)
+     *  6. Save the original entry address (if we hook, meaning override a function, our hook will
+     *     probably want access to the original function, so we save it)
+     *  7.
+     */
     for (size_t i = 0; i < rela_count; i++) {
-        Elf64_Rela *r = &rela[i];
-        unsigned long symbol_index = ELF64_R_SYM(r->r_info);
-        unsigned long relocation_type    = ELF64_R_TYPE(r->r_info);
+        Elf64_Rela *rela_entry = &rela[i];
+        unsigned long symbol_index = ELF64_R_SYM(rela_entry->r_info);
+        unsigned long relocation_type = ELF64_R_TYPE(rela_entry->r_info);
 
         if (relocation_type != MY_JUMP_SLOT)
             continue;
 
-        Elf64_Sym *symbol   = &symbol_table[symbol_index];
+        Elf64_Sym *symbol = &symbol_table[symbol_index];
         const char *name = string_table + symbol->st_name;
 
+        /*
+         * Filter out all functions that aren't the requested function
+         */
         if (strcmp(name, ctx->symbol_name) != 0)
             continue;
 
-        void **got_entry = (void **)(base_load_address + r->r_offset);
+        void **got_entry = (void **)(base_load_address + rela_entry->r_offset);
         if (!got_entry)
             continue;
 
+        /*
+         * Saving original function
+         */
         if (ctx->orig_func && *ctx->orig_func == NULL) {
-            *ctx->orig_func = *got_entry;   //save original function
+            *ctx->orig_func = *got_entry;
         }
+
 
         if (make_writable(got_entry) != 0) {
             fprintf(stderr, "[libhook] failed to mprotect GOT for %s in %s\n",
@@ -194,6 +258,15 @@ static int phdr_callback(struct dl_phdr_info *info,
                 "[libhook] patching %s in %s: %p -> %p\n",
                 ctx->symbol_name, objname,
                 *got_entry, ctx->new_func);
+
+        /*
+         *  Actual GOT Injection!
+         *  (V) We found the original function's GOT entry
+         *  (V) We stored the original function's address
+         *  (V) We made it's page writable
+         *
+         *  Now we can overwrite GOT entry with our hook!
+         */
 
         *got_entry = ctx->new_func;
         ctx->patched_count++;
@@ -216,6 +289,9 @@ int hook_plt_symbol(const char *symbol_name,
         .patched_count = 0,
     };
 
+    /*
+     *  dl_iterate_phdr -> calls phdr_callback for every shared library on the process.
+     */
     dl_iterate_phdr(phdr_callback, &ctx);
 
     return (ctx.patched_count > 0) ? 0 : -1;
