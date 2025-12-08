@@ -107,19 +107,17 @@ After learning about both FDs & Procfs and experimenting live on a linux compute
 5. Communcate freely over the session (some response terminal)
 
 #### How was i going to solve each step?
-##### 1:
-All current TCP connections are stored in procfs at path: `/proc/net/tcp` (Ipv4) and `/proc/net/tcp` (Ipv6). I could read the file using root, identify all listening connections, within those connections find out which one is listening on port 443. Then i have it's Inode! Now that i have the Inode, i search for the pid & fid. How?
+
+**1 -** All current TCP connections are stored in procfs at path: `/proc/net/tcp` (Ipv4) and `/proc/net/tcp` (Ipv6). I could read the file using root, identify all listening connections, within those connections find out which one is listening on port 443. Then i have it's Inode! Now that i have the Inode, i search for the pid & fid. How?
 read all /proc/{PID}/fd/{FD number} files until i find one that points to the Inode i found. I know PID must be an int which helps narrow the search a bit.
 
-#### 2:
-Creating a process is easy (C code). To get access to another process's socket all i had to do was have my process open the /proc/{Web server pid}/fd/{fd number} and my process gets it's own pointer to the underlying Inode!
 
-#### 3:
-At this point in time, the only idea i had to prevent the server from eavsdropping on my home connection was allowing the web server to initially accept the connection, locate the home connection fds im intrested in, use steps 1 & 2 to get my process access to those FDs (meaning both the web server and my process will point to the file table entry pointing the the socket's Inode). Then delete the web server's FD file, AKA Closing it's connection. The web server should think the client closed the connection or some error occured and remove the client connection from it's active connections. Then you can freely pass data on the connection and the server will ignore it..
+**2 -** Creating a process is easy (C code). To get access to another process's socket all i had to do was have my process open the /proc/{Web server pid}/fd/{fd number} and my process gets it's own pointer to the underlying Inode!
+
+**3 -** At this point in time, the only idea i had to prevent the server from eavsdropping on my home connection was allowing the web server to initially accept the connection, locate the home connection fds im intrested in, use steps 1 & 2 to get my process access to those FDs (meaning both the web server and my process will point to the file table entry pointing the the socket's Inode). Then delete the web server's FD file, AKA Closing it's connection. The web server should think the client closed the connection or some error occured and remove the client connection from it's active connections. Then you can freely pass data on the connection and the server will ignore it..
 After proposing solution, it came to my attention that the home connection's ip will be logged to server logs, outside of assignment boundaries..
 
-#### 4:
-Identifing home connections was challenging until i narrowed down what was allowed and what wasn't.
+**4 -** Identifing home connections was challenging until i narrowed down what was allowed and what wasn't.
 - No partial/suspicous network traffic was allowed, so monitoring the network like i originally planned for and looking for specific qualities in packets wasn't an option.
 - After proposing solution, another assignment restriction was added. The home client's ip isn't known ahead of time :/
 
