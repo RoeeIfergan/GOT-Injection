@@ -112,7 +112,7 @@ After learning about both FDs & Procfs and experimenting live on a linux compute
 read all /proc/{PID}/fd/{FD number} files until i find one that points to the Inode i found. I know PID must be an int which helps narrow the search a bit.
 
 
-**2 -** Creating a process is easy (C code). To get access to another process's socket all i had to do was have my process open the /proc/{Web server pid}/fd/{fd number} and my process gets it's own pointer to the underlying Inode!
+**2 -** Creating a process is easy (Compiled C code). To get access to another process's socket all i had to do was have my process open the /proc/{Web server pid}/fd/{fd number} and my process gets it's own pointer to the underlying Inode!
 
 **3 -** At this point in time, the only idea i had to prevent the server from eavsdropping on my home connection was allowing the web server to initially accept the connection, locate the home connection fds im intrested in, use steps 1 & 2 to get my process access to those FDs (meaning both the web server and my process will point to the file table entry pointing the the socket's Inode). Then delete the web server's FD file, AKA Closing it's connection. The web server should think the client closed the connection or some error occured and remove the client connection from it's active connections. Then you can freely pass data on the connection and the server will ignore it..
 After proposing solution, it came to my attention that the home connection's ip will be logged to server logs, outside of assignment boundaries..
@@ -341,8 +341,12 @@ ReadReturn --> WS_proc
 
 # References
 
+### Process Injection reference:
+https://www.akamai.com/blog/security-research/the-definitive-guide-to-linux-process-injection
+
 ### Ptrace reference:
 https://blog.xpnsec.com/linux-process-injection-aka-injecting-into-sshd-for-fun/
 
 ### Shellcode reference:
 https://github.com/gaffe23/linux-inject/blob/master/inject-x86_64.c
+https://github.com/Srakai/Adun
